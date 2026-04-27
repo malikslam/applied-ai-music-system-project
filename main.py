@@ -5,9 +5,16 @@ Run from the project root:
     python main.py
 
 Requires ANTHROPIC_API_KEY env var for RAG-enriched explanations.
-Without it, explain_recommendation() falls back to a template string.
+Without it, explain_recommendation() falls back to a template string and
+logs a WARNING showing which song triggered the fallback and why.
 """
+import logging
 from pathlib import Path
+
+logging.basicConfig(
+    level=logging.WARNING,
+    format="[%(levelname)s] %(name)s: %(message)s",
+)
 
 from src.recommender import load_songs, Song, UserProfile, Recommender
 from src.evaluator import compute_metrics, detect_bias

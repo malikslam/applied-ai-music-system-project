@@ -9,9 +9,12 @@ Public API:
   recommend_songs()         — functional top-k wrapper (kept for backward compat)
 """
 import csv
+import logging
 import os
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
+
+logger = logging.getLogger(__name__)
 
 from .knowledge_base import retrieve_context, _REASON_FIRST_WORD_TO_FEATURE
 
@@ -203,7 +206,11 @@ class Recommender:
 
         try:
             return _generate_explanation(user, song, score, reasons, context)
-        except Exception:
+        except Exception as exc:
+            logger.warning(
+                "explain_recommendation falling back to template for '%s' (score=%.2f): %s",
+                song.title, score, exc,
+            )
             return _fallback_explanation(song, score, reasons)
 
 

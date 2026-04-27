@@ -258,7 +258,23 @@ LLMs occasionally overclaim. A song with a 0.32 match score could receive an exp
 
 ## Testing Summary
 
-**26 tests, all passing.**
+The system uses four overlapping reliability mechanisms:
+
+| Mechanism | Where | What it covers |
+|---|---|---|
+| **Automated tests** | `tests/` (26 tests, all pass) | Scoring correctness, bias flags, metrics edge cases, fallback path |
+| **Confidence scoring** | `score_song()` → 0–1 score; `EvalMetrics.mean_score` | Per-song match strength; per-profile average reliability |
+| **Logging + error handling** | `src/recommender.py` | `[WARNING]` logged with song title, score, and exception whenever the Claude call fails and the fallback template is used |
+| **Human evaluation** | Sample Interactions section above | Three profiles manually reviewed against expected ranking behavior |
+
+**Quick summary:** 26/26 tests passed. Confidence scores on the three test profiles averaged 0.62–0.77 (Profile C highest at 0.77, Profile A lowest at 0.62). Accuracy improved after adding the LLM validation guardrail, which flags over-confident explanations when the match score is below 0.40. When no API key is set, every call triggers a logged warning:
+
+```
+[WARNING] src.recommender: explain_recommendation falling back to template
+for 'Storm Runner' (score=0.98): ANTHROPIC_API_KEY not set — falling back to template.
+```
+
+**Test breakdown:**
 
 | Test file | Tests | What they cover |
 |---|---|---|
