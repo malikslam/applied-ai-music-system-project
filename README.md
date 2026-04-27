@@ -21,36 +21,91 @@ This matters because "showing reasons" is not the same as being transparent. The
 ## Architecture Overview
 
 ```
-main.py
-  │
-  ├── src/recommender.py          Core scoring + Recommender class
-  │     ├── score_song()          Weighted similarity (unchanged from VibeMatcher)
-  │     ├── Recommender.score_all()   Scores all songs, returns sorted (Song, float) pairs
-  │     ├── Recommender.recommend()   Returns top-k Song objects
-  │     └── Recommender.explain_recommendation()
-  │           │
-  │           ├── score_song()          Get per-feature breakdown + reasons
-  │           ├── src/knowledge_base.py
-  │           │     └── retrieve_context(genre, mood, features)
-  │           │           Returns genre doc + mood doc + up to 2 feature docs
-  │           │           (this is the RAG retrieval step)
-  │           │
-  │           ├── Claude API (claude-haiku-4-5)
-  │           │     Prompt = user profile + song + score breakdown + retrieved context
-  │           │     Response = 2–3 sentence natural-language explanation
-  │           │
-  │           └── Validation
-  │                 If score < 0.4 and LLM says "perfect match" → append correction note
-  │                 If API key missing or call fails → fallback template explanation
-  │
-  └── src/evaluator.py
-        ├── compute_metrics(results, user)   → EvalMetrics
-        └── detect_bias(results, user, all_songs) → BiasReport
-              Checks: Mood Dominance · Genre Filter Bubble
-                      Catalog Coverage Gap · Score Cliff
+ INPUT
+ ┌─────────────────────────────────────────────────────────┐
+ │  UserProfile (genre, mood, energy, likes_acoustic)      │
+ │  data/songs.csv  →  10 Song objects                     │
+ └────────────────────────────┬────────────────────────────┘
+                              │
+                              ▼
+ SCORING  [src/recommender.py — score_song()]
+ ┌─────────────────────────────────────────────────────────┐
+ │  Weighted similarity: each song scored 0–1              │
+ │  Features: genre, mood, energy, acousticness,           │
+ │            valence, tempo_bpm, danceability             │
+ │  Output: sorted (Song, score) pairs  ←── confidence     │
+ └──────────────┬──────────────────────────────────────────┘
+                │  top-5 results + per-feature reasons
+       ┌────────┴────────────────┐
+       │                         │
+       ▼                         ▼
+ RAG RETRIEVAL                EVALUATION  [src/evaluator.py]
+ [src/knowledge_base.py]      ┌────────────────────────────┐
+ ┌──────────────────────┐     │  compute_metrics()         │
+ │  retrieve_context()  │     │    precision@k, genre       │
+ │  Looks up:           │     │    coverage, score std dev  │
+ │  · genre doc         │     │                            │
+ │  · mood doc          │     │  detect_bias()             │
+ │  · top feature docs  │     │    Mood Dominance          │
+ └──────────┬───────────┘     │    Genre Filter Bubble     │
+            │ retrieved        │    Catalog Coverage Gap    │
+            │ context          │    Score Cliff             │
+            ▼                 └────────────┬───────────────┘
+ LLM EXPLANATION                          │ EvalMetrics
+ [src/recommender.py —                    │ BiasReport
+  _generate_explanation()]                │
+ ┌──────────────────────┐                 │
+ │  Prompt contains:    │                 │
+ │  · user profile      │                 │
+ │  · song + score      │                 │
+ │  · score breakdown   │                 │
+ │  · retrieved context │                 │
+ │       │              │                 │
+ │  Claude Haiku API    │                 │
+ │       │              │                 │
+ │  VALIDATION          │                 │
+ │  score < 0.4 +       │                 │
+ │  overclaim? → note   │                 │
+ │       │              │                 │
+ │  API fail / no key?  │                 │
+ │  → fallback template │                 │
+ │  → [WARNING] logged  │◄── LOGGING      │
+ └──────────┬───────────┘                 │
+            │ explanation string          │
+            └──────────────┬─────────────┘
+                           ▼
+ OUTPUT  [main.py — printed to terminal]
+ ┌─────────────────────────────────────────────────────────┐
+ │  For each profile:                                      │
+ │    · Ranked top-5 songs with score bar + explanation    │
+ │    · Evaluation Metrics  (precision, coverage, std dev) │
+ │    · Bias Report         (named flags with severity)    │
+ └─────────────────────────────────────────────────────────┘
+
+ TESTING & HUMAN CHECKPOINTS
+ ┌─────────────────────────────────────────────────────────┐
+ │  Automated  tests/test_evaluator.py   (20 tests)        │
+ │             tests/test_recommender.py  (6 tests)        │
+ │             Covers: scoring, all bias flags, metrics,   │
+ │             fallback path via mock                      │
+ │                                                         │
+ │  Human      Sample Interactions section — 3 profiles    │
+ │             reviewed manually against expected ranking  │
+ └─────────────────────────────────────────────────────────┘
 ```
 
-The knowledge base (`src/knowledge_base.py`) is a local dictionary — no vector database or embedding model. Retrieval is deterministic: look up the song's genre, mood, and top-scoring numeric features by key. This keeps the RAG step inspectable and free of external dependencies.
+**Component summary:**
+
+| Component | File | Role |
+|---|---|---|
+| Scorer | `src/recommender.py` | Weighted 0–1 similarity per song → confidence signal |
+| Retriever | `src/knowledge_base.py` | Looks up genre/mood/feature docs for RAG context |
+| LLM Explainer | `src/recommender.py` | Claude Haiku generates grounded natural-language explanation |
+| Validator | `src/recommender.py` | Flags overclaimed explanations; falls back + logs on failure |
+| Evaluator | `src/evaluator.py` | Precision, diversity, and score-spread metrics per run |
+| Bias Detector | `src/evaluator.py` | Four structural checks → named flags with severity |
+| Logger | `src/recommender.py` | `[WARNING]` on every fallback with song, score, and reason |
+| Test Suite | `tests/` | 26 automated tests covering all components |
 
 ---
 
